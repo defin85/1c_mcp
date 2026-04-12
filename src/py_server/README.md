@@ -137,6 +137,7 @@ docker-compose down
 - Используется локальными MCP-клиентами
 - Логи идут в stderr
 - OAuth2 не поддерживается (при `MCP_AUTH_MODE=oauth2` запуск завершится ошибкой)
+- Если upstream 1С временно недоступен, прокси по умолчанию не падает на `initialize`, а стартует в деградированном режиме и пытается восстановить подключение на следующих MCP-запросах
 
 ### HTTP режим
 
@@ -204,6 +205,11 @@ MCP_PUBLIC_URL=http://your-server:8000
 | `MCP_ONEC_USERNAME` | Имя пользователя | - | ✅ При `AUTH_MODE=none` |
 | `MCP_ONEC_PASSWORD` | Пароль | - | ✅ При `AUTH_MODE=none` |
 | `MCP_ONEC_SERVICE_ROOT` | Корень HTTP-сервиса | `mcp` | ❌ |
+| `MCP_STARTUP_HEALTHCHECK_ATTEMPTS` | Количество health-check попыток при старте | `5` | ❌ |
+| `MCP_STARTUP_RETRY_DELAY_SEC` | Задержка между health-check попытками при старте | `2.0` | ❌ |
+| `MCP_STARTUP_ALLOW_DEGRADED` | Разрешить старт в деградированном режиме, если 1С временно недоступна | `true` | ❌ |
+| `MCP_RECOVERY_HEALTHCHECK_ATTEMPTS` | Количество попыток восстановления после ошибки upstream | `3` | ❌ |
+| `MCP_RECOVERY_RETRY_DELAY_SEC` | Задержка между попытками восстановления upstream | `1.0` | ❌ |
 
 ### HTTP-сервер
 

@@ -1,5 +1,6 @@
 """Клиент для взаимодействия с 1С."""
 
+import asyncio
 import json
 import logging
 from typing import Any, Dict, List, Optional
@@ -12,9 +13,13 @@ import base64
 logger = logging.getLogger(__name__)
 
 
+class OneCUpstreamError(RuntimeError):
+	"""Ошибка транспорта или доступности upstream-сервиса 1С."""
+
+
 class OneCClient:
 	"""Клиент для взаимодействия с HTTP-сервисом 1С."""
-	
+
 	def __init__(self, base_url: str, username: str, password: str, service_root: str = "mcp"):
 		"""Инициализация клиента.
 
@@ -53,40 +58,83 @@ class OneCClient:
 			logger.warning("HTTP-клиент был закрыт, выполняется восстановление...")
 			self.client = self._create_client()
 			logger.info("HTTP-клиент успешно восстановлен")
-	
-	async def check_health(self) -> bool:
+
+	@staticmethod
+	def _normalize_attempts(attempts: int) -> int:
+		"""Нормализовать количество попыток."""
+		return max(1, attempts)
+
+	async def _retry_upstream_operation(self, operation_name: str, operation, attempts: int = 1, retry_delay_sec: float = 0.0):
+		"""Выполнить операцию с повторными попытками для временных ошибок upstream."""
+		total_attempts = self._normalize_attempts(attempts)
+		last_error: Optional[OneCUpstreamError] = None
+
+		for attempt in range(1, total_attempts + 1):
+			try:
+				return await operation()
+			except OneCUpstreamError as error:
+				last_error = error
+				if attempt >= total_attempts:
+					raise
+
+				logger.warning(
+					"%s не удалась (попытка %s/%s): %s. Повтор через %.1f сек.",
+					operation_name,
+					attempt,
+					total_attempts,
+					error,
+					retry_delay_sec
+				)
+				if retry_delay_sec > 0:
+					await asyncio.sleep(retry_delay_sec)
+
+		if last_error is not None:
+			raise last_error
+
+		raise RuntimeError(f"{operation_name}: внутренняя ошибка ретрая")
+
+	async def check_health(self, attempts: int = 1, retry_delay_sec: float = 0.0) -> bool:
 		"""Проверить состояние HTTP-сервиса 1С.
 
 		Returns:
 			True, если сервис доступен и здоров, иначе вызывает исключение.
 		"""
-		try:
-			# Проверяем и восстанавливаем клиент при необходимости
-			await self._ensure_client()
-
-			url = f"{self.service_base_url}/health"
-			logger.debug(f"Запрос состояния здоровья: {url}")
-
-			response = await self.client.get(url)
-			response.raise_for_status()
-
-			# Проверяем JSON ответ от 1C healthGET
+		async def health_request() -> bool:
 			try:
-				response_json = response.json()
+				# Проверяем и восстанавливаем клиент при необходимости
+				await self._ensure_client()
+
+				url = f"{self.service_base_url}/health"
+				logger.debug(f"Запрос состояния здоровья: {url}")
+
+				response = await self.client.get(url)
+				response.raise_for_status()
+
+				# Проверяем JSON ответ от 1C healthGET
+				try:
+					response_json = response.json()
+				except json.JSONDecodeError as error:
+					logger.error(f"Ошибка парсинга JSON ответа health-check 1С: {response.text}")
+					raise OneCUpstreamError(f"Некорректный JSON в health-check 1С: {error}") from error
+
 				if response_json.get("status") == "ok":
 					logger.debug("Сервис 1С доступен и здоров (статус OK).")
 					return True
-				else:
-					logger.warning(f"1C health check вернул неожиданный статус: {response_json}")
-					raise httpx.HTTPStatusError(f"1C service reported not healthy: {response_json}", request=response.request, response=response)
-			except json.JSONDecodeError as e:
-				logger.error(f"Ошибка парсинга JSON ответа health-check 1С: {response.text}")
-				raise httpx.HTTPStatusError(f"Invalid JSON response from 1C health check: {e}", request=response.request, response=response)
 
-		except httpx.HTTPError as e:
-			logger.error(f"Ошибка HTTP при проверке состояния 1С: {e}")
-			raise
-	
+				logger.warning(f"1C health check вернул неожиданный статус: {response_json}")
+				raise OneCUpstreamError(f"1C service reported not healthy: {response_json}")
+
+			except httpx.HTTPError as error:
+				logger.error(f"Ошибка HTTP при проверке состояния 1С: {error}")
+				raise OneCUpstreamError(str(error)) from error
+
+		return await self._retry_upstream_operation(
+			"Health-check 1С",
+			health_request,
+			attempts=attempts,
+			retry_delay_sec=retry_delay_sec
+		)
+
 	async def call_rpc(self, method: str, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
 		"""Выполнить JSON-RPC запрос к 1С.
 
@@ -102,7 +150,7 @@ class OneCClient:
 			await self._ensure_client()
 
 			url = f"{self.service_base_url}/rpc"
-			
+
 			# Формируем JSON-RPC запрос
 			rpc_request = {
 				"jsonrpc": "2.0",
@@ -110,38 +158,38 @@ class OneCClient:
 				"method": method,
 				"params": params or {}
 			}
-			
+
 			logger.debug(f"JSON-RPC запрос: {rpc_request}")
-			
+
 			response = await self.client.post(url, json=rpc_request)
 			response.raise_for_status()
-			
+
 			rpc_response = response.json()
 			logger.debug(f"JSON-RPC ответ: {rpc_response}")
-			
+
 			# Проверяем на ошибки JSON-RPC
 			if "error" in rpc_response:
 				error = rpc_response["error"]
 				raise Exception(f"JSON-RPC ошибка {error.get('code', 'unknown')}: {error.get('message', 'Unknown error')}")
-			
+
 			return rpc_response.get("result", {})
-			
-		except httpx.HTTPError as e:
-			logger.error(f"Ошибка HTTP при вызове RPC: {e}")
-			raise
-		except json.JSONDecodeError as e:
-			logger.error(f"Ошибка парсинга JSON ответа RPC: {e}")
-			raise
-	
+
+		except httpx.HTTPError as error:
+			logger.error(f"Ошибка HTTP при вызове RPC: {error}")
+			raise OneCUpstreamError(str(error)) from error
+		except json.JSONDecodeError as error:
+			logger.error(f"Ошибка парсинга JSON ответа RPC: {error}")
+			raise OneCUpstreamError(f"Некорректный JSON от 1С RPC: {error}") from error
+
 	async def list_tools(self) -> List[types.Tool]:
 		"""Получить список доступных инструментов.
-		
+
 		Returns:
 			Список инструментов MCP
 		"""
 		result = await self.call_rpc("tools/list")
 		tools_data = result.get("tools", [])
-		
+
 		tools = []
 		for tool_data in tools_data:
 			tool = types.Tool(
@@ -150,16 +198,16 @@ class OneCClient:
 				inputSchema=tool_data.get("inputSchema", {})
 			)
 			tools.append(tool)
-		
+
 		return tools
-	
+
 	async def call_tool(self, name: str, arguments: Dict[str, Any]) -> types.CallToolResult:
 		"""Вызвать инструмент.
-		
+
 		Args:
 			name: Имя инструмента
 			arguments: Аргументы инструмента
-			
+
 		Returns:
 			Результат выполнения инструмента
 		"""
@@ -167,26 +215,26 @@ class OneCClient:
 			"name": name,
 			"arguments": arguments
 		})
-		
+
 		# Преобразуем результат в формат MCP
 		content = []
 		if "content" in result:
 			for item in result["content"]:
 				content_type = item.get("type")
-				
+
 				if content_type == "text":
 					content.append(types.TextContent(
 						type="text",
 						text=item.get("text", "")
 					))
-				
+
 				elif content_type == "image":
 					content.append(types.ImageContent(
 						type="image",
 						data=item.get("data", ""),
 						mimeType=item.get("mimeType", "image/png")
 					))
-				
+
 				else:
 					# Неизвестный тип - логируем предупреждение и обрабатываем как текст
 					logger.warning(f"Неизвестный тип контента: {content_type}, обрабатываем как текст")
@@ -194,21 +242,21 @@ class OneCClient:
 						type="text",
 						text=str(item.get("text", item))
 					))
-		
+
 		return types.CallToolResult(
 			content=content,
 			isError=result.get("isError", False)
 		)
-	
+
 	async def list_resources(self) -> List[types.Resource]:
 		"""Получить список доступных ресурсов.
-		
+
 		Returns:
 			Список ресурсов MCP
 		"""
 		result = await self.call_rpc("resources/list")
 		resources_data = result.get("resources", [])
-		
+
 		resources = []
 		for resource_data in resources_data:
 			resource = types.Resource(
@@ -218,22 +266,22 @@ class OneCClient:
 				mimeType=resource_data.get("mimeType")
 			)
 			resources.append(resource)
-		
+
 		return resources
-	
+
 	async def read_resource(self, uri: str) -> List[ReadResourceContents]:
 		"""Прочитать ресурс.
-		
+
 		Args:
 			uri: URI ресурса
-			
+
 		Returns:
 			Список частей содержимого ресурса (текст/бинарные данные)
 		"""
 		# MCP декоратор может передать сюда AnyUrl; приводим к строке перед JSON-RPC
 		uri_str = str(uri)
 		result = await self.call_rpc("resources/read", {"uri": uri_str})
-		
+
 		# Преобразуем результат в Iterable[ReadResourceContents] для декоратора read_resource
 		contents: List[ReadResourceContents] = []
 		if "contents" in result:
@@ -272,18 +320,18 @@ class OneCClient:
 				content=json.dumps(result, ensure_ascii=False),
 				mime_type="application/json"
 			))
-		
+
 		return contents
-	
+
 	async def list_prompts(self) -> List[types.Prompt]:
 		"""Получить список доступных промптов.
-		
+
 		Returns:
 			Список промптов MCP
 		"""
 		result = await self.call_rpc("prompts/list")
 		prompts_data = result.get("prompts", [])
-		
+
 		prompts = []
 		for prompt_data in prompts_data:
 			arguments = []
@@ -294,23 +342,23 @@ class OneCClient:
 						description=arg_data.get("description", ""),
 						required=arg_data.get("required", False)
 					))
-			
+
 			prompt = types.Prompt(
 				name=prompt_data["name"],
 				description=prompt_data.get("description", ""),
 				arguments=arguments
 			)
 			prompts.append(prompt)
-		
+
 		return prompts
-	
+
 	async def get_prompt(self, name: str, arguments: Optional[Dict[str, str]] = None) -> types.GetPromptResult:
 		"""Получить промпт.
-		
+
 		Args:
 			name: Имя промпта
 			arguments: Аргументы промпта
-			
+
 		Returns:
 			Результат промпта
 		"""
@@ -318,7 +366,7 @@ class OneCClient:
 			"name": name,
 			"arguments": arguments or {}
 		})
-		
+
 		# Преобразуем результат в формат MCP
 		messages = []
 		if "messages" in result:
@@ -327,18 +375,18 @@ class OneCClient:
 					type="text",
 					text=msg_data.get("content", {}).get("text", "")
 				)
-				
+
 				message = types.PromptMessage(
 					role=msg_data.get("role", "user"),
 					content=content
 				)
 				messages.append(message)
-		
+
 		return types.GetPromptResult(
 			description=result.get("description", ""),
 			messages=messages
 		)
-	
+
 	async def close(self):
 		"""Закрыть клиент."""
-		await self.client.aclose() 
+		await self.client.aclose()

@@ -1,6 +1,5 @@
 """Конфигурация MCP-прокси сервера."""
 
-import os
 from typing import Optional, Literal
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
@@ -18,6 +17,30 @@ class Config(BaseSettings):
 	onec_username: Optional[str] = Field(default=None, description="Имя пользователя 1С")
 	onec_password: Optional[str] = Field(default=None, description="Пароль пользователя 1С")
 	onec_service_root: str = Field(default="mcp", description="Корневой URL HTTP-сервиса в 1С")
+	startup_healthcheck_attempts: int = Field(
+		default=5,
+		ge=1,
+		description="Количество попыток health-check при старте"
+	)
+	startup_retry_delay_sec: float = Field(
+		default=2.0,
+		ge=0,
+		description="Задержка между health-check попытками при старте"
+	)
+	startup_allow_degraded: bool = Field(
+		default=True,
+		description="Разрешить старт MCP-прокси в деградированном режиме, если 1С временно недоступна"
+	)
+	recovery_healthcheck_attempts: int = Field(
+		default=3,
+		ge=1,
+		description="Количество попыток health-check при восстановлении после ошибки upstream"
+	)
+	recovery_retry_delay_sec: float = Field(
+		default=1.0,
+		ge=0,
+		description="Задержка между попытками восстановления upstream"
+	)
 	
 	# Настройки MCP
 	server_name: str = Field(default="1C Configuration Data Tools", description="Имя MCP-сервера")

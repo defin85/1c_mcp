@@ -61,6 +61,11 @@ def create_parser() -> argparse.ArgumentParser:
   MCP_OAUTH2_CODE_TTL    - TTL authorization code в секундах (по умолчанию: 120)
   MCP_OAUTH2_ACCESS_TTL  - TTL access token в секундах (по умолчанию: 3600)
   MCP_OAUTH2_REFRESH_TTL - TTL refresh token в секундах (по умолчанию: 1209600)
+  MCP_STARTUP_HEALTHCHECK_ATTEMPTS - Количество health-check попыток при старте (по умолчанию: 5)
+  MCP_STARTUP_RETRY_DELAY_SEC      - Задержка между health-check попытками при старте (по умолчанию: 2.0)
+  MCP_STARTUP_ALLOW_DEGRADED       - Разрешить старт в деградированном режиме (по умолчанию: true)
+  MCP_RECOVERY_HEALTHCHECK_ATTEMPTS - Количество попыток восстановления upstream после ошибки (по умолчанию: 3)
+  MCP_RECOVERY_RETRY_DELAY_SEC      - Задержка между попытками восстановления upstream (по умолчанию: 1.0)
 		"""
 	)
 	
