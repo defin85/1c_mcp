@@ -73,6 +73,7 @@
 			<HTTPService>mcp_APIBackend</HTTPService>
 			<DataProcessor>mcp_УправлениеСервером</DataProcessor>
 			<DataProcessor>mcp_ИнструментДанныеОКонфигурации</DataProcessor>
+			<DataProcessor>mcp_ИнструментОтладкаВД</DataProcessor>
 			<DataProcessor>mcp_РесурсОписаниеСинтаксисаВстроенногоЯзыка</DataProcessor>
 		</ChildObjects>
 	</Configuration>
