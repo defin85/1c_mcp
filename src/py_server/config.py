@@ -51,6 +51,10 @@ class Config(BaseSettings):
 	
 	# Настройки безопасности
 	cors_origins: list[str] = Field(default=["*"], description="Разрешенные CORS origins")
+	allow_debug_execute: bool = Field(
+		default=False,
+		description="Разрешить debug-only инструмент debug_execute_bsl"
+	)
 	
 	# Настройки авторизации OAuth2
 	auth_mode: Literal["none", "oauth2"] = Field(default="none", description="Режим авторизации: none или oauth2")

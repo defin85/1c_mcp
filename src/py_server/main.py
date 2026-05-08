@@ -56,6 +56,7 @@ def create_parser() -> argparse.ArgumentParser:
   MCP_HOST               - Хост HTTP-сервера (по умолчанию: 127.0.0.1)
   MCP_PORT               - Порт HTTP-сервера (по умолчанию: 8000)
   MCP_LOG_LEVEL          - Уровень логирования (по умолчанию: INFO)
+  MCP_ALLOW_DEBUG_EXECUTE - Разрешить debug_execute_bsl на тестовом контуре (по умолчанию: false)
   MCP_AUTH_MODE          - Режим авторизации: none или oauth2 (по умолчанию: none)
   MCP_PUBLIC_URL         - Публичный URL для OAuth2 (опционально)
   MCP_OAUTH2_CODE_TTL    - TTL authorization code в секундах (по умолчанию: 120)
@@ -109,6 +110,11 @@ def create_parser() -> argparse.ArgumentParser:
 		type=str,
 		choices=["DEBUG", "INFO", "WARNING", "ERROR"],
 		help="Уровень логирования"
+	)
+	parser.add_argument(
+		"--allow-debug-execute",
+		action="store_true",
+		help="Разрешить debug_execute_bsl на тестовом контуре"
 	)
 	
 	# HTTP-специфичные аргументы
@@ -189,6 +195,8 @@ async def main():
 		os.environ["MCP_PORT"] = str(args.port)
 	if args.log_level:
 		os.environ["MCP_LOG_LEVEL"] = args.log_level
+	if args.allow_debug_execute:
+		os.environ["MCP_ALLOW_DEBUG_EXECUTE"] = "true"
 	if args.auth_mode:
 		os.environ["MCP_AUTH_MODE"] = args.auth_mode
 	if args.public_url:

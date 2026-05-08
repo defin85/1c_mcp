@@ -15,6 +15,7 @@ from .config import Config
 
 
 logger = logging.getLogger(__name__)
+DEBUG_ONLY_TOOLS = {"debug_execute_bsl"}
 
 # Context var для per-session креденшилов 1С (login, password)
 current_onec_credentials: contextvars.ContextVar[Optional[Tuple[str, str]]] = contextvars.ContextVar(
@@ -145,6 +146,22 @@ class MCPProxy:
 			logger.error("%s не выполнена: %s", operation_name, error)
 			return fallback(error)
 
+	def _is_tool_allowed(self, tool_name: str) -> bool:
+		"""Проверить, разрешен ли инструмент текущей конфигурацией."""
+		if tool_name in DEBUG_ONLY_TOOLS and not self.config.allow_debug_execute:
+			return False
+		return True
+
+	def _filter_tools(self, tools: List[types.Tool]) -> List[types.Tool]:
+		"""Отфильтровать недоступные инструменты из списка."""
+		filtered_tools = [tool for tool in tools if self._is_tool_allowed(tool.name)]
+		if len(filtered_tools) != len(tools):
+			logger.debug(
+				"Скрыто debug-only инструментов: %s",
+				len(tools) - len(filtered_tools)
+			)
+		return filtered_tools
+
 	def _register_handlers(self):
 		"""Регистрация обработчиков MCP."""
 
@@ -153,7 +170,8 @@ class MCPProxy:
 			"""Получить список доступных инструментов."""
 			async def operation(onec_client: OneCClient) -> List[types.Tool]:
 				tools = await onec_client.list_tools()
-				logger.debug(f"Получено инструментов: {len(tools)}")
+				tools = self._filter_tools(tools)
+				logger.debug(f"Получено инструментов после фильтрации: {len(tools)}")
 				return tools
 
 			return await self._run_with_upstream_recovery(
@@ -166,6 +184,11 @@ class MCPProxy:
 		async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextContent]:
 			"""Вызвать инструмент."""
 			async def operation(onec_client: OneCClient) -> List[types.TextContent]:
+				if not self._is_tool_allowed(name):
+					raise PermissionError(
+						f"Инструмент {name} отключен. Установите MCP_ALLOW_DEBUG_EXECUTE=true только на тестовом контуре."
+					)
+
 				logger.debug(f"Вызов инструмента: {name} с аргументами: {arguments}")
 				result = await onec_client.call_tool(name, arguments)
 

@@ -77,6 +77,12 @@ MCP_ONEC_USERNAME=admin
 MCP_ONEC_PASSWORD=password
 ```
 
+Для тестового контура можно дополнительно включить debug-only generic executor:
+
+```ini
+MCP_ALLOW_DEBUG_EXECUTE=true
+```
+
 **Запуск:**
 ```bash
 python -m src.py_server http --port 8000
@@ -210,6 +216,7 @@ MCP_PUBLIC_URL=http://your-server:8000
 | `MCP_STARTUP_ALLOW_DEGRADED` | Разрешить старт в деградированном режиме, если 1С временно недоступна | `true` | ❌ |
 | `MCP_RECOVERY_HEALTHCHECK_ATTEMPTS` | Количество попыток восстановления после ошибки upstream | `3` | ❌ |
 | `MCP_RECOVERY_RETRY_DELAY_SEC` | Задержка между попытками восстановления upstream | `1.0` | ❌ |
+| `MCP_ALLOW_DEBUG_EXECUTE` | Публиковать debug-only инструмент `debug_execute_bsl` | `false` | ❌ |
 
 ### HTTP-сервер
 
@@ -248,6 +255,7 @@ python -m src.py_server http \
   --onec-url http://server/base \
   --onec-username admin \
   --onec-password secret \
+  --allow-debug-execute \
   --auth-mode oauth2 \
   --public-url http://proxy:8000 \
   --port 8000 \
@@ -390,6 +398,18 @@ python -m src.py_server http --log-level DEBUG
 # - MCP операции (tools/resources/prompts)
 # - Ошибки подключения
 ```
+
+### Debug-only `debug_execute_bsl`
+
+Инструмент `debug_execute_bsl` предназначен для коротких разовых runtime-проверок на тестовом контуре.
+
+- По умолчанию инструмент скрыт из `tools/list`.
+- Для включения задайте `MCP_ALLOW_DEBUG_EXECUTE=true` или добавьте CLI-флаг `--allow-debug-execute`.
+- Внутри исполняемого кода доступны переменные:
+  - `Параметры` — данные из `parametersJson`
+  - `Результат` — переменная, в которую надо записать итог
+- В журнал регистрации 1С пишутся события старта, ошибки и завершения с `debugPurpose`.
+- Не включайте этот режим на production/shared контурах.
 
 ## Интеграция с 1С
 
